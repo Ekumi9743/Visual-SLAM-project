@@ -1,6 +1,6 @@
 ## Step 1 TUM RGB-D benchmark
 
-For step 1, I will use the examble codes from MATLAB website below.
+For step 1, I will use the examble codes from MATLAB website below. You can see the code from "code" file.
 
     https://www.mathworks.com/help/vision/ug/monocular-visual-simultaneous-localization-and-mapping.html
 
