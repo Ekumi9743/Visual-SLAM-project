@@ -40,7 +40,7 @@ intrinsics     = cameraIntrinsics(focalLength, principalPoint, imageSize);
 % Detect and extract ORB features
 scaleFactor = 1.2;
 numLevels   = 8;
-numPoints   = 1000;
+numPoints   = 800;
 [preFeatures, prePoints] = helperDetectAndExtractFeatures(currI, scaleFactor, numLevels, numPoints); 
 
 currFrameIdx = currFrameIdx + 1;
@@ -72,13 +72,11 @@ while ~isMapInitialized && currFrameIdx < numel(imds.Files)
     preMatchedPoints  = prePoints(indexPairs(:,1),:);
     currMatchedPoints = currPoints(indexPairs(:,2),:);
 
-    % Compute homography and evaluate reconstruction
     [tformH, scoreH, inliersIdxH] = helperComputeHomography(preMatchedPoints, currMatchedPoints);
 
-    % Compute fundamental matrix and evaluate reconstruction
+   
     [tformF, scoreF, inliersIdxF] = helperComputeFundamentalMatrix(preMatchedPoints, currMatchedPoints);
 
-    % Select the model based on a heuristic
     ratio = scoreH/(scoreH + scoreF);
     ratioThreshold = 0.45;
     if ratio > ratioThreshold
@@ -89,20 +87,18 @@ while ~isMapInitialized && currFrameIdx < numel(imds.Files)
         tform          = tformF;
     end
 
-    % Computes the camera location up to scale. Use half of the 
-    % points to reduce computation
     inlierPrePoints  = preMatchedPoints(inlierTformIdx);
     inlierCurrPoints = currMatchedPoints(inlierTformIdx);
     [relPose, validFraction] = estrelpose(tform, intrinsics, ...
         inlierPrePoints(1:2:end), inlierCurrPoints(1:2:end));
 
-    % If not enough inliers are found, move to the next frame
+   
     if validFraction < 0.9 || numel(relPose)==3
         continue
     end
 
-    % Triangulate two views to obtain 3-D map points
-    minParallax = 1; % In degrees
+   
+    minParallax = 1; 
     [isValid, xyzWorldPoints, inlierTriangulationIdx] = helperTriangulateTwoFrames(...
         rigidtform3d, relPose, inlierPrePoints, inlierCurrPoints, intrinsics, minParallax);
 
@@ -110,7 +106,7 @@ while ~isMapInitialized && currFrameIdx < numel(imds.Files)
         continue
     end
 
-    % Get the original index of features in the two key frames
+    
     indexPairs = indexPairs(inlierTformIdx(inlierTriangulationIdx),:);
 
     isMapInitialized = true;
@@ -127,53 +123,45 @@ else
     error('Unable to initialize the map.')
 end
 
-% Create an empty imageviewset object to store key frames
+
 vSetKeyFrames = imageviewset;
 
-% Create an empty worldpointset object to store 3-D map points
+
 mapPointSet   = worldpointset;
 
-% Add the first key frame. Place the camera associated with the first 
-% key frame at the origin, oriented along the Z-axis
+
 preViewId     = 1;
 vSetKeyFrames = addView(vSetKeyFrames, preViewId, rigidtform3d, Points=prePoints,...
     Features=preFeatures.Features);
 
-% Add the second key frame
+
 currViewId    = 2;
 vSetKeyFrames = addView(vSetKeyFrames, currViewId, relPose, Points=currPoints,...
     Features=currFeatures.Features);
 
-% Add connection between the first and the second key frame
+
 vSetKeyFrames = addConnection(vSetKeyFrames, preViewId, currViewId, relPose, Matches=indexPairs);
 
-% Add 3-D map points
 [mapPointSet, newPointIdx] = addWorldPoints(mapPointSet, xyzWorldPoints);
 
-% Add observations of the map points
 preLocations  = prePoints.Location;
 currLocations = currPoints.Location;
 preScales     = prePoints.Scale;
 currScales    = currPoints.Scale;
 
-% Add image points corresponding to the map points in the first key frame
 mapPointSet   = addCorrespondences(mapPointSet, preViewId, newPointIdx, indexPairs(:,1));
 
-% Add image points corresponding to the map points in the second key frame
 mapPointSet   = addCorrespondences(mapPointSet, currViewId, newPointIdx, indexPairs(:,2));
 
-
-% Load the bag of features data created offline
 bofData         = load("bagOfFeaturesDataSLAM.mat");
 
-% Initialize the place recognition database
 loopDatabase    = invertedImageIndex(bofData.bof,SaveFeatureLocations=false);
 
-% Add features of the first two key frames to the database
+
 addImageFeatures(loopDatabase, preFeatures, preViewId);
 addImageFeatures(loopDatabase, currFeatures, currViewId);
 
-% Run full bundle adjustment on the first two key frames
+
 tracks       = findTracks(vSetKeyFrames);
 cameraPoses  = poses(vSetKeyFrames);
 
@@ -183,7 +171,7 @@ cameraPoses  = poses(vSetKeyFrames);
     RelativeTolerance=1e-15, MaxIteration=20, ...
     Solver="preconditioned-conjugate-gradient");
 
-% Scale the map and the camera pose using the median depth of map points
+
 medianDepth   = median(vecnorm(refinedPoints.'));
 refinedPoints = refinedPoints / medianDepth;
 
@@ -191,40 +179,35 @@ refinedAbsPoses.AbsolutePose(currViewId).Translation = ...
     refinedAbsPoses.AbsolutePose(currViewId).Translation / medianDepth;
 relPose.Translation = relPose.Translation/medianDepth;
 
-% Update key frames with the refined poses
+
 vSetKeyFrames = updateView(vSetKeyFrames, refinedAbsPoses);
 vSetKeyFrames = updateConnection(vSetKeyFrames, preViewId, currViewId, relPose);
 
-% Update map points with the refined positions
+
 mapPointSet = updateWorldPoints(mapPointSet, newPointIdx, refinedPoints);
 
-% Update view direction and depth 
+
 mapPointSet = updateLimitsAndDirection(mapPointSet, newPointIdx, vSetKeyFrames.Views);
 
-% Update representative view
+
 mapPointSet = updateRepresentativeView(mapPointSet, newPointIdx, vSetKeyFrames.Views);
 
-% Visualize matched features in the current frame
+
 close(hfeature.Parent.Parent);
 featurePlot   = helperVisualizeMatchedFeatures(currI, currPoints(indexPairs(:,2)));
 
-% Visualize initial map points and camera trajectory
+
 mapPlot       = helperVisualizeMotionAndStructure(vSetKeyFrames, mapPointSet);
 
-% Show legend
 showLegend(mapPlot);
 
 
-% ViewId of the current key frame
 currKeyFrameId   = currViewId;
 
-% ViewId of the last key frame
 lastKeyFrameId   = currViewId;
 
-% Index of the last key frame in the input image sequence
 lastKeyFrameIdx  = currFrameIdx - 1; 
 
-% Indices of all the key frames in the input image sequence
 addedFramesIdx   = [1; lastKeyFrameIdx];
 
 isLoopClosed     = false;
@@ -255,8 +238,8 @@ while ~isLoopClosed && currFrameIdx < numel(imds.Files)
     % If tracking is lost, try a larger value.
     %
     % localKeyFrameIds:   ViewId of the connected key frames of the current frame
-    numSkipFrames     =50;
-    numPointsKeyFrame = 2000;
+    numSkipFrames     = 50;
+    numPointsKeyFrame = 1500;
     [localKeyFrameIds, currPose, mapPointsIdx, featureIdx, isKeyFrame] = ...
         helperTrackLocalMap(mapPointSet, vSetKeyFrames, mapPointsIdx, ...
         featureIdx, currPose, currFeatures, currPoints, intrinsics, scaleFactor, numLevels, ...
@@ -342,7 +325,14 @@ while ~isLoopClosed && currFrameIdx < numel(imds.Files)
     lastKeyFrameIdx = currFrameIdx;
     addedFramesIdx  = [addedFramesIdx; currFrameIdx]; %#ok<AGROW>
     currFrameIdx    = currFrameIdx + 1;
-end % End of main loop
+end 
+
+% End of main loop
+
+
+
+
+
 
 
 if isLoopClosed
@@ -367,13 +357,10 @@ end
 gTruthData = load("orbslamGroundTruth.mat");
 gTruth     = gTruthData.gTruth;
 
-% Plot the actual camera trajectory 
 plotActualTrajectory(mapPlot, gTruth(addedFramesIdx), optimizedPoses);
 
-% Show legend
 showLegend(mapPlot);
 
-% Evaluate tracking accuracy
 helperEstimateTrajectoryError(gTruth(addedFramesIdx), optimizedPoses);
 
 
@@ -403,7 +390,6 @@ while ~isDone(vslam)
     end
 end
 
-% Get final 3-D map points and camera poses
 xyzPoints = mapPoints(vslam);
 camPoses  = poses(vslam);
 
@@ -414,14 +400,24 @@ compileTimeInputs  = {coder.typeof(currI)};
 
 codegen helperMonoVisualSLAM -args compileTimeInputs
 
-
-% Process each image frame 
+ 
 for i=1:numel(imds.Files)
     [xyzPoints, camPoses] = helperMonoVisualSLAM_mex(readimage(imds,i));
 end
 
 % Clear up
 clear helperMonoVisualSLAM_mex
+
+
+
+
+
+
+
+
+
+
+
 
 
 function [features, validPoints] = helperDetectAndExtractFeatures(Irgb, ...
